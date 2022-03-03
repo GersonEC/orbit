@@ -10,7 +10,8 @@ import FormError from './../components/FormError';
 import GradientBar from './../components/common/GradientBar';
 import GradientButton from '../components/common/GradientButton';
 import logo from './../images/logo.png';
-
+import { publicFetch} from '../util/fetch';
+import {Redirect} from 'react-router-dom';
 const LoginSchema = Yup.object().shape({
   email: Yup.string().required('Email is required'),
   password: Yup.string().required('Password is required')
@@ -20,9 +21,15 @@ const Login = () => {
   const [loginSuccess, setLoginSuccess] = useState();
   const [loginError, setLoginError] = useState();
   const [loginLoading, setLoginLoading] = useState(false);
+  const [redirectOnLogin, setRedirectOnLogin] = useState(false);
 
   const submitCredentials = async credentials => {
     try {
+      const { data } = await publicFetch.post('authenticate', credentials)
+      setLoginSuccess(data.message);
+      setTimeout(() => {
+        setRedirectOnLogin(true);
+      }, 700);
       setLoginLoading(true);
     } catch (error) {
       setLoginLoading(false);
@@ -34,6 +41,7 @@ const Login = () => {
 
   return (
     <>
+      { redirectOnLogin && <Redirect to="/dashboard" />}
       <section className="w-full sm:w-1/2 h-screen m-auto p-8 sm:pt-10">
         <GradientBar />
         <Card>
