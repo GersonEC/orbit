@@ -2,9 +2,10 @@ require('dotenv').config();
 const express = require('express');
 const bodyParser = require('body-parser');
 const cors = require('cors');
+const jwt = require('express-jwt');
 const jwtDecode = require('jwt-decode');
 const mongoose = require('mongoose');
-
+const cookieParser = require('cookie-parser');
 const dashboardData = require('./data/dashboard');
 const User = require('./data/User');
 const InventoryItem = require('./data/InventoryItem');
@@ -20,6 +21,7 @@ const app = express();
 app.use(cors());
 app.use(bodyParser.urlencoded({ extended: false }));
 app.use(bodyParser.json());
+app.use(cookieParser());
 
 app.post('/api/authenticate', async (req, res) => {
   try {
@@ -134,7 +136,45 @@ app.post('/api/signup', async (req, res) => {
   }
 });
 
-app.get('/api/dashboard-data', (req, res) =>
+const attachUser = (req, res, next) => {
+  const token = req.cookies.token;
+  if (!token) {
+    return res
+      .status(401)
+      .json({ message: 'Authentication invalid' });
+  }
+  const decodedToken = jwtDecode(token);
+
+  if (!decodedToken) {
+    return res.status(401).json({
+      message: 'There was a problem authorizing the request'
+    });
+  } else {
+    req.user = decodedToken;
+    next();
+  }
+};
+
+app.use(attachUser);
+
+const requireAuth = jwt({
+  secret: process.env.JWT_SECRET,
+  audience: 'api.orbit',
+  issuer: 'api.orbit',
+  getToken: req => req.cookies.token
+});
+
+const requireAdmin = (req, res, next) => {
+  const { role } = req.user;
+  if (role !== 'admin') {
+    return res
+      .status(401)
+      .json({ message: 'Insufficient role' });
+  }
+  next();
+};
+
+app.get('/api/dashboard-data', requireAuth, (req, res) =>
   res.json(dashboardData)
 );
 
@@ -161,48 +201,69 @@ app.patch('/api/user-role', async (req, res) => {
   }
 });
 
-app.get('/api/inventory', async (req, res) => {
-  try {
-    const inventoryItems = await InventoryItem.find();
-    res.json(inventoryItems);
-  } catch (err) {
-    return res.status(400).json({ error: err });
+app.get(
+  '/api/inventory',
+  requireAuth,
+  requireAdmin,
+  async (req, res) => {
+    try {
+      const user = req.user.sub;
+      const inventoryItems = await InventoryItem.find({
+        user
+      });
+      res.json(inventoryItems);
+    } catch (err) {
+      return res.status(400).json({ error: err });
+    }
   }
-});
+);
 
-app.post('/api/inventory', async (req, res) => {
-  try {
-    const inventoryItem = new InventoryItem(req.body);
-    await inventoryItem.save();
-    res.status(201).json({
-      message: 'Inventory item created!',
-      inventoryItem
-    });
-  } catch (err) {
-    console.log(err);
-    return res.status(400).json({
-      message: 'There was a problem creating the item'
-    });
+app.post(
+  '/api/inventory',
+  requireAuth,
+  requireAdmin,
+  async (req, res) => {
+    try {
+      const userId = req.user.sub;
+      const input = Object.assign({}, req.body, {
+        user: userId
+      });
+      const inventoryItem = new InventoryItem(input);
+      await inventoryItem.save();
+      res.status(201).json({
+        message: 'Inventory item created!',
+        inventoryItem
+      });
+    } catch (err) {
+      return res.status(400).json({
+        message: 'There was a problem creating the item'
+      });
+    }
   }
-});
+);
 
-app.delete('/api/inventory/:id', async (req, res) => {
-  try {
-    const deletedItem = await InventoryItem.findOneAndDelete(
-      { _id: req.params.id }
-    );
-    res.status(201).json({
-      message: 'Inventory item deleted!',
-      deletedItem
-    });
-  } catch (err) {
-    return res.status(400).json({
-      message: 'There was a problem deleting the item.'
-    });
+app.delete(
+  '/api/inventory/:id',
+  requireAuth,
+  requireAdmin,
+  async (req, res) => {
+    try {
+      const deletedItem = await InventoryItem.findOneAndDelete(
+        { _id: req.params.id, user: req.user.sub }
+      );
+      res.status(201).json({
+        message: 'Inventory item deleted!',
+        deletedItem
+      });
+    } catch (err) {
+      return res.status(400).json({
+        message: 'There was a problem deleting the item.'
+      });
+    }
   }
-});
+);
 
-app.get('/api/users', async (req, res) => {
+app.get('/api/users', requireAuth, async (req, res) => {
   try {
     const users = await User.find()
       .lean()
@@ -218,7 +279,7 @@ app.get('/api/users', async (req, res) => {
   }
 });
 
-app.get('/api/bio', async (req, res) => {
+app.get('/api/bio', requireAuth, async (req, res) => {
   try {
     const { sub } = req.user;
     const user = await User.findOne({
@@ -237,7 +298,7 @@ app.get('/api/bio', async (req, res) => {
   }
 });
 
-app.patch('/api/bio', async (req, res) => {
+app.patch('/api/bio', requireAuth, async (req, res) => {
   try {
     const { sub } = req.user;
     const { bio } = req.body;
